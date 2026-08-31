@@ -30,3 +30,7 @@ Versione cloud della demo storica di Sentinel Market.
 
 ## Nota
 Questa è una piattaforma di ricerca e validazione. I risultati storici non garantiscono risultati futuri.
+
+
+## V1.6 Strategy 2 Builder
+Frozen Strategy 2 specification, development/validation gates, SHA-256 audit ID, and a deliberately sealed final test.
