@@ -8,7 +8,7 @@ from sentinel.config import load_config
 from sentinel.data import fetch_history_with_fallback
 from sentinel.features import add_features
 from sentinel.regime import add_regime_features
-from sentinel.strategy2 import add_strategy2_signals
+from sentinel.strategy2 import add_strategy2_signals, STRATEGY2_PARAMS
 from sentinel.backtest_strategy2 import simulate_strategy2
 from sentinel.backtest import metrics
 from sentinel.validation import chronological_split
