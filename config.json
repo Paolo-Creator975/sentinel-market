@@ -1,0 +1,15 @@
+{
+  "mode": "HISTORICAL",
+  "exchange_candidates": ["binance", "bybit", "okx", "kraken"],
+  "symbols": ["BTC/USDT", "ETH/USDT"],
+  "timeframes": ["15m", "1h"],
+  "starting_capital": 1000,
+  "monthly_contribution": 100,
+  "risk_per_trade_pct": 0.5,
+  "max_position_pct": 5.0,
+  "min_rr": 1.5,
+  "fee_pct_roundtrip": 0.20,
+  "slippage_pct_roundtrip": 0.10,
+  "score_threshold": 75,
+  "history_days_default": 90
+}
