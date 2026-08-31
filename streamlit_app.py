@@ -2,166 +2,109 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+
 from sentinel.config import load_config
 from sentinel.data import fetch_history_with_fallback
 from sentinel.features import add_features
-from sentinel.backtest import simulate,metrics,probability_by_score
-from sentinel.advisor import investment_range,recommendation
+from sentinel.validation import chronological_split, evaluate_period, verdict, score_calibration, parameter_sweep
 
-st.set_page_config(page_title='Sentinel Market',layout='wide')
-cfg=load_config(); st.title('Sentinel Market — Historical Replay'); st.caption('Demo storica: nessun denaro reale, nessun account, nessuna API key.')
+st.set_page_config(page_title="Sentinel Calibration Lab", layout="wide")
+cfg = load_config()
+
+st.title("Sentinel Market — Calibration Lab V1.2")
+st.caption("Ricerca storica rigorosa: sviluppo, validazione e test finale separati nel tempo. Nessun denaro reale.")
 
 with st.sidebar:
-    symbol=st.selectbox('Mercato',cfg['symbols'])
-    days=st.slider('Storico (giorni)',30,365,int(cfg['history_days_default']),step=30)
-    capital=st.number_input('Capitale simulato (€)',min_value=100.0,value=float(cfg['starting_capital']),step=100.0)
-    replay=st.slider('Punto del replay',20,100,100)
+    symbol = st.selectbox("Mercato", cfg["symbols"])
+    days = st.slider("Storico richiesto (giorni)", 90, 365, 365, step=30)
+    capital = st.number_input("Capitale simulato (€)", min_value=100.0, value=float(cfg["starting_capital"]), step=100.0)
+    st.info("Split temporale: 60% sviluppo · 20% validazione · 20% test finale")
 
-@st.cache_data(ttl=3600,show_spinner=False)
-def load_market(exchange_candidates,symbol,days):
-    source, raw = fetch_history_with_fallback(exchange_candidates, symbol, '15m', days)
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_market(candidates, symbol, days):
+    source, raw = fetch_history_with_fallback(candidates, symbol, "15m", days)
     return source, add_features(raw)
 
 try:
-    with st.spinner('Carico dati storici pubblici...'):
-        data_source, df = load_market(tuple(cfg['exchange_candidates']), symbol, days)
-    st.caption(f'Fonte dati pubblica utilizzata: {data_source.upper()}')
+    with st.spinner("Carico e preparo lo storico..."):
+        source, df = load_market(tuple(cfg["exchange_candidates"]), symbol, days)
 except Exception as e:
-    st.error(f'Impossibile caricare i dati: {e}')
-    st.info('Sentinel ha provato automaticamente le fonti pubbliche configurate. Nessuna API key o account è richiesto.')
+    st.error(f"Errore dati: {e}")
     st.stop()
 
-cut=max(80,int(len(df)*replay/100))
-view=df.iloc[:cut].copy()
-cur=view.iloc[-1]
+cfg_run = dict(cfg)
+cfg_run["starting_capital"] = capital
 
-run=dict(cfg)
-run['starting_capital']=capital
-trades=simulate(view,run)
-m=metrics(trades,capital)
-prob,n=probability_by_score(trades,float(cur.sentinel_score))
+train, val, test = chronological_split(df)
+train_trades, train_m = evaluate_period(train, cfg_run)
+val_trades, val_m = evaluate_period(val, cfg_run)
+test_trades, test_m = evaluate_period(test, cfg_run)
 
-entry=float(cur.close)
-atr=float(cur.atr14) if not pd.isna(cur.atr14) else entry*.01
-stop=entry-1.2*atr
-rr=float(cfg['min_rr'])
-target=entry+rr*(entry-stop)
+st.caption(f"Fonte pubblica: {source.upper()} · Candele chiuse: {len(df):,}")
 
-lo,hi=investment_range(
-    capital,
-    float(cfg['risk_per_trade_pct']),
-    entry,
-    stop,
-    float(cfg['max_position_pct'])
+st.subheader("1 · Esame della Strategia Zero")
+cols = st.columns(3)
+periods = [
+    ("SVILUPPO 60%", train_m),
+    ("VALIDAZIONE 20%", val_m),
+    ("TEST FINALE 20%", test_m),
+]
+for c, (name, m) in zip(cols, periods):
+    with c:
+        st.markdown(f"### {name}")
+        st.metric("Verdetto", verdict(m))
+        st.metric("Trade", m["trades"])
+        st.metric("Win rate", f'{m["win_rate"]:.1f}%')
+        pf = m["profit_factor"]
+        st.metric("Profit factor", "∞" if np.isinf(pf) else f"{pf:.2f}")
+        st.metric("Rendimento netto", f'{m["net_return_pct"]:.2f}%')
+        st.metric("Max drawdown", f'{m["max_drawdown_pct"]:.2f}%')
+        st.metric("Expectancy / trade", f'€ {m["expectancy_eur"]:.2f}')
+
+st.warning(
+    "Il TEST FINALE non deve essere usato per scegliere i parametri. "
+    "Serve soltanto come esame indipendente dopo le decisioni prese su sviluppo/validazione."
 )
 
-net=((target-entry)/entry*100)-(
-    float(cfg['fee_pct_roundtrip'])+
-    float(cfg['slippage_pct_roundtrip'])
-)
-
-rec,why=recommendation(
-    float(cur.sentinel_score),
-    float(cur.extreme_risk),
-    prob
-)
-
-if rec=='OPPORTUNITÀ':
-    st.success('🟢 SENTINEL: OPPORTUNITÀ')
-elif rec=='ATTENDI':
-    st.warning('🟡 SENTINEL: ATTENDI')
-else:
-    st.error('🔴 SENTINEL: NON ENTRARE')
-
-st.write(why)
-
-c1,c2,c3,c4=st.columns(4)
-c1.metric('Sentinel Score',f'{cur.sentinel_score:.0f}/100')
-c2.metric(
-    'Successo storico comparabile',
-    'N/D' if prob is None else f'{prob:.1f}%',
-    None if prob is None else f'campione {n}'
-)
-c3.metric('Rischio estremo',f'{cur.extreme_risk:.0f}/100')
-c4.metric('Guadagno netto target',f'{net:.2f}%')
-
-st.subheader('Indicazione semplice')
-a1,a2,a3=st.columns(3)
-a1.metric('Range indicativo da esporre',f'€ {lo:,.0f} – {hi:,.0f}')
-a2.metric('Perdita pianificata sul capitale',f"{float(cfg['risk_per_trade_pct']):.2f}%")
-a3.metric('Rapporto rischio/rendimento',f'1 : {rr:.1f}')
-
+st.subheader("2 · Il Sentinel Score predice davvero qualcosa?")
+all_trades = pd.concat([train_trades, val_trades, test_trades], ignore_index=True)
+cal = score_calibration(all_trades)
+st.dataframe(cal, use_container_width=True, hide_index=True)
 st.caption(
-    'Il range € deriva dal Risk Manager sul capitale simulato e sullo stop; '
-    'non è una raccomandazione finanziaria personalizzata.'
+    "Se lo Score è utile, le fasce più alte dovrebbero mostrare risultati migliori in modo abbastanza regolare. "
+    "Se non accade, i pesi dello Score vanno riprogettati."
 )
 
-st.subheader('Analisi statistica numerica')
-b1,b2,b3,b4,b5=st.columns(5)
-b1.metric('Trade simulati',m['trades'])
-b2.metric('Win rate',f"{m['win_rate']:.1f}%")
-b3.metric(
-    'Profit factor',
-    '∞' if np.isinf(m['profit_factor']) else f"{m['profit_factor']:.2f}"
+st.subheader("3 · Laboratorio parametri — SOLO periodo di sviluppo")
+sweep = parameter_sweep(train, cfg_run)
+display = sweep.sort_values(["profit_factor","net_return_pct"], ascending=False).copy()
+st.dataframe(display, use_container_width=True, hide_index=True)
+st.caption(
+    "Questa tabella non autorizza a scegliere semplicemente la riga con il rendimento maggiore. "
+    "Le varianti promettenti devono essere confermate sulla validazione e poi sul test finale."
 )
-b4.metric('Rendimento netto',f"{m['net_return_pct']:.2f}%")
-b5.metric('Max drawdown',f"{m['max_drawdown_pct']:.2f}%")
 
-risk=float(cur.extreme_risk)
-label='BASSO' if risk<30 else 'MODERATO' if risk<55 else 'ALTO' if risk<70 else 'ESTREMO'
+st.subheader("4 · Regime di mercato e andamento")
+recent = df.tail(300)
+fig = go.Figure()
+fig.add_trace(go.Candlestick(
+    x=recent["datetime"], open=recent["open"], high=recent["high"],
+    low=recent["low"], close=recent["close"], name=symbol
+))
+fig.add_trace(go.Scatter(x=recent["datetime"], y=recent["ema20"], name="EMA20"))
+fig.add_trace(go.Scatter(x=recent["datetime"], y=recent["ema50"], name="EMA50"))
+fig.update_layout(height=460, xaxis_rangeslider_visible=False)
+st.plotly_chart(fig, use_container_width=True)
 
-st.subheader('Eventi estremi / Black Swan Risk')
+st.subheader("5 · Regola di promozione")
 st.write(
-    f'**Indice attuale: {risk:.0f}/100 — {label}.** '
-    'È un indicatore di anomalie statistiche, non una probabilità matematica di un vero cigno nero.'
+    "Una strategia non passa al paper trading perché funziona sul periodo di sviluppo. "
+    "Deve mantenere expectancy positiva dopo costi, profit factor > 1, drawdown controllato, "
+    "campione sufficiente e comportamento coerente su validazione e test finale."
 )
-
-st.subheader('Replay del mercato')
-recent=view.tail(250)
-
-fig=go.Figure()
-fig.add_trace(
-    go.Candlestick(
-        x=recent.datetime,
-        open=recent.open,
-        high=recent.high,
-        low=recent.low,
-        close=recent.close,
-        name=symbol
-    )
-)
-fig.add_trace(go.Scatter(x=recent.datetime,y=recent.ema20,name='EMA20'))
-fig.add_trace(go.Scatter(x=recent.datetime,y=recent.ema50,name='EMA50'))
-fig.update_layout(height=470,xaxis_rangeslider_visible=False)
-st.plotly_chart(fig,use_container_width=True)
-
-if not trades.empty:
-    st.subheader('Equity simulata')
-
-    eq=pd.concat([
-        pd.DataFrame({
-            'exit_time':[view.iloc[0].datetime],
-            'capital_after':[capital]
-        }),
-        trades[['exit_time','capital_after']]
-    ],ignore_index=True)
-
-    fig2=go.Figure(
-        go.Scatter(
-            x=eq.exit_time,
-            y=eq.capital_after,
-            mode='lines'
-        )
-    )
-
-    fig2.update_layout(height=300)
-    st.plotly_chart(fig2,use_container_width=True)
-
-    with st.expander('Ultime operazioni simulate'):
-        st.dataframe(trades.tail(20),use_container_width=True)
 
 st.divider()
 st.caption(
-    'Historical Replay V1: modello iniziale. '
-    'Prima di qualunque uso reale servono test fuori campione e paper trading live.'
+    "V1.2 Calibration Lab — strumento di ricerca. I risultati storici non garantiscono risultati futuri "
+    "e non costituiscono una raccomandazione di investimento."
 )
