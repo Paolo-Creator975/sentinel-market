@@ -1,207 +1,204 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 
+FEATURES = [
+    "strategy1_score",
+    "rsi14",
+    "vol_ratio",
+    "ema_gap_atr",
+    "volume_ratio",
+    "dist_ema20_atr",
+]
 
-def _safe_numeric(series):
-    return pd.to_numeric(series, errors="coerce")
+def _safe_numeric(s):
+    return pd.to_numeric(s, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
 
-
-def compare_winners_losers(trades):
-    """
-    Confronta le caratteristiche presenti all'ingresso
-    delle operazioni vincenti e perdenti.
-    Uso diagnostico: non modifica la strategia.
-    """
-    if trades is None or len(trades) == 0:
+def feature_separation(train_enriched):
+    if train_enriched is None or train_enriched.empty:
         return pd.DataFrame()
 
-    df = trades.copy()
+    rows = []
+    for feat in FEATURES:
+        if feat not in train_enriched.columns:
+            continue
 
-    if "pnl_eur" not in df.columns:
+        win = _safe_numeric(train_enriched.loc[train_enriched["winner"], feat])
+        loss = _safe_numeric(train_enriched.loc[~train_enriched["winner"], feat])
+
+        if len(win) < 3 or len(loss) < 3:
+            continue
+
+        pooled = np.sqrt((win.var(ddof=1) + loss.var(ddof=1)) / 2)
+        effect = (win.mean() - loss.mean()) / pooled if pooled and np.isfinite(pooled) else 0.0
+
+        rows.append({
+            "feature": feat,
+            "n_win": int(len(win)),
+            "n_loss": int(len(loss)),
+            "media_win": float(win.mean()),
+            "media_loss": float(loss.mean()),
+            "differenza": float(win.mean() - loss.mean()),
+            "effect_size": float(effect),
+            "abs_effect": abs(float(effect)),
+        })
+
+    if not rows:
         return pd.DataFrame()
 
-    df["group"] = np.where(
-        _safe_numeric(df["pnl_eur"]) > 0,
-        "WIN",
-        "LOSS"
-    )
+    return pd.DataFrame(rows).sort_values("abs_effect", ascending=False)
 
-    features = [
-        "strategy1_score",
-        "rsi14",
-        "vol_ratio",
-        "volume_ratio",
-        "ema_gap_atr",
-        "dist_ema20_atr",
-    ]
+
+def quantile_discovery(train_enriched):
+    if train_enriched is None or train_enriched.empty:
+        return pd.DataFrame()
 
     rows = []
 
-    for feature in features:
-        if feature not in df.columns:
+    for feat in FEATURES:
+        if feat not in train_enriched.columns:
             continue
 
-        values = _safe_numeric(df[feature])
+        t = train_enriched[[feat, "pnl_eur", "winner"]].copy()
+        t[feat] = pd.to_numeric(t[feat], errors="coerce")
+        t = t.dropna()
 
-        for group in ["WIN", "LOSS"]:
-            mask = df["group"] == group
-            sample = values[mask].dropna()
+        if len(t) < 15 or t[feat].nunique() < 4:
+            continue
 
-            if len(sample) == 0:
+        try:
+            t["bucket"] = pd.qcut(t[feat], q=3, duplicates="drop")
+        except Exception:
+            continue
+
+        for bucket, g in t.groupby("bucket", observed=False):
+            if len(g) == 0:
                 continue
 
             rows.append({
-                "feature": feature,
-                "gruppo": group,
-                "n": int(len(sample)),
-                "media": round(float(sample.mean()), 4),
-                "mediana": round(float(sample.median()), 4),
-                "q25": round(float(sample.quantile(0.25)), 4),
-                "q75": round(float(sample.quantile(0.75)), 4),
+                "feature": feat,
+                "bucket": str(bucket),
+                "n": int(len(g)),
+                "win_rate": float(g["winner"].mean() * 100),
+                "pnl_medio": float(g["pnl_eur"].mean()),
+                "pnl_totale": float(g["pnl_eur"].sum()),
             })
 
     return pd.DataFrame(rows)
 
 
-def discover_candidate_rules(trades, min_samples=5):
-    """
-    Cerca differenze descrittive tra trade vincenti e perdenti.
-
-    IMPORTANTE:
-    le regole restituite sono IPOTESI DI RICERCA,
-    non segnali approvati per il trading.
-    """
-
-    comparison = compare_winners_losers(trades)
-
-    if comparison.empty:
+def candidate_hypotheses(train_enriched, min_group=6):
+    if train_enriched is None or train_enriched.empty:
         return pd.DataFrame()
 
-    candidates = []
+    ideas = []
 
-    for feature in comparison["feature"].unique():
+    def add_rule(name, mask, feature, direction, threshold):
+        g = train_enriched.loc[mask].copy()
+        if len(g) < min_group:
+            return
 
-        part = comparison[comparison["feature"] == feature]
-
-        win = part[part["gruppo"] == "WIN"]
-        loss = part[part["gruppo"] == "LOSS"]
-
-        if win.empty or loss.empty:
-            continue
-
-        w = win.iloc[0]
-        l = loss.iloc[0]
-
-        if w["n"] < min_samples or l["n"] < min_samples:
-            continue
-
-        difference = float(w["mediana"] - l["mediana"])
-
-        pooled_scale = max(
-            abs(float(w["q75"] - w["q25"])),
-            abs(float(l["q75"] - l["q25"])),
-            1e-9
-        )
-
-        separation = abs(difference) / pooled_scale
-
-        if difference > 0:
-            direction = "VALORI PIÙ ALTI associati ai WIN"
-        elif difference < 0:
-            direction = "VALORI PIÙ BASSI associati ai WIN"
-        else:
-            direction = "NESSUNA DIFFERENZA"
-
-        candidates.append({
+        ideas.append({
+            "ipotesi": name,
             "feature": feature,
-            "n_win": int(w["n"]),
-            "n_loss": int(l["n"]),
-            "mediana_win": round(float(w["mediana"]), 4),
-            "mediana_loss": round(float(l["mediana"]), 4),
-            "differenza": round(difference, 4),
-            "separation_index": round(float(separation), 3),
-            "ipotesi": direction,
+            "direzione": direction,
+            "soglia": float(threshold),
+            "n_sviluppo": int(len(g)),
+            "win_rate_sviluppo": float(g["winner"].mean() * 100),
+            "pnl_medio_sviluppo": float(g["pnl_eur"].mean()),
         })
 
-    if not candidates:
+    for feat in FEATURES:
+        if feat not in train_enriched.columns:
+            continue
+
+        s = pd.to_numeric(train_enriched[feat], errors="coerce")
+
+        if s.notna().sum() < 15:
+            continue
+
+        q33 = float(s.quantile(.33))
+        q67 = float(s.quantile(.67))
+
+        add_rule(f"{feat} <= Q33", s <= q33, feat, "<=", q33)
+        add_rule(f"{feat} >= Q67", s >= q67, feat, ">=", q67)
+
+    if not ideas:
         return pd.DataFrame()
 
-    result = pd.DataFrame(candidates)
-
-    return result.sort_values(
-        "separation_index",
-        ascending=False
-    ).reset_index(drop=True)
-
-
-def score_quality_by_band(trades):
-    """
-    Controlla se score più elevati corrispondono realmente
-    a risultati migliori.
-    """
-
-    if trades is None or len(trades) == 0:
-        return pd.DataFrame()
-
-    df = trades.copy()
-
-    required = {"strategy1_score", "pnl_eur"}
-
-    if not required.issubset(df.columns):
-        return pd.DataFrame()
-
-    df["strategy1_score"] = _safe_numeric(df["strategy1_score"])
-    df["pnl_eur"] = _safe_numeric(df["pnl_eur"])
-
-    bins = [-np.inf, 70, 75, 80, 85, 90, np.inf]
-    labels = [
-        "<70",
-        "70-74",
-        "75-79",
-        "80-84",
-        "85-89",
-        "90-100",
-    ]
-
-    df["score_band"] = pd.cut(
-        df["strategy1_score"],
-        bins=bins,
-        labels=labels,
-        right=False
+    return pd.DataFrame(ideas).sort_values(
+        ["pnl_medio_sviluppo", "n_sviluppo"],
+        ascending=[False, False]
     )
+
+
+def apply_hypothesis(enriched, row):
+    if enriched is None or enriched.empty:
+        return pd.DataFrame()
+
+    feat = row["feature"]
+
+    if feat not in enriched.columns:
+        return pd.DataFrame()
+
+    s = pd.to_numeric(enriched[feat], errors="coerce")
+    thr = float(row["soglia"])
+
+    if row["direzione"] == "<=":
+        return enriched.loc[s <= thr].copy()
+
+    return enriched.loc[s >= thr].copy()
+
+
+def evaluate_subset(subset):
+    if subset is None or subset.empty:
+        return {
+            "n": 0,
+            "win_rate": 0.0,
+            "pnl_medio": 0.0,
+            "pnl_totale": 0.0,
+        }
+
+    return {
+        "n": int(len(subset)),
+        "win_rate": float(subset["winner"].mean() * 100),
+        "pnl_medio": float(subset["pnl_eur"].mean()),
+        "pnl_totale": float(subset["pnl_eur"].sum()),
+    }
+
+
+def validation_screen(train_candidates, validation_enriched, top_n=8):
+    if train_candidates is None or train_candidates.empty:
+        return pd.DataFrame()
 
     rows = []
 
-    for band in labels:
-
-        sample = df[df["score_band"] == band].dropna(
-            subset=["pnl_eur"]
-        )
-
-        n = len(sample)
-
-        if n == 0:
-            rows.append({
-                "score_band": band,
-                "trade": 0,
-                "win_rate": np.nan,
-                "pnl_medio": np.nan,
-                "pnl_totale": np.nan,
-            })
-            continue
+    for _, r in train_candidates.head(top_n).iterrows():
+        subset = apply_hypothesis(validation_enriched, r)
+        ev = evaluate_subset(subset)
 
         rows.append({
-            "score_band": band,
-            "trade": int(n),
-            "win_rate": round(
-                float((sample["pnl_eur"] > 0).mean() * 100), 2
-            ),
-            "pnl_medio": round(
-                float(sample["pnl_eur"].mean()), 4
-            ),
-            "pnl_totale": round(
-                float(sample["pnl_eur"].sum()), 4
-            ),
+            **r.to_dict(),
+            "n_validazione": ev["n"],
+            "win_rate_validazione": ev["win_rate"],
+            "pnl_medio_validazione": ev["pnl_medio"],
+            "pnl_totale_validazione": ev["pnl_totale"],
+            "coerente": bool(
+                r["pnl_medio_sviluppo"] > 0 and
+                ev["n"] >= 3 and
+                ev["pnl_medio"] > 0
+            )
         })
 
     return pd.DataFrame(rows)
+
+
+def discovery_verdict(screen):
+    if screen is None or screen.empty:
+        return "NESSUNA IPOTESI VALUTABILE"
+
+    coherent = int(screen["coerente"].sum()) if "coerente" in screen.columns else 0
+
+    if coherent == 0:
+        return "NESSUNA IPOTESI CONFERMATA"
+
+    return f"{coherent} IPOTESI DA STUDIARE"
