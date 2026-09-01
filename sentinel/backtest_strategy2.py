@@ -1,4 +1,4 @@
-        import pandas as pd
+import pandas as pd
 from .strategy2 import STRATEGY2_PARAMS
 
 def simulate_strategy2(df, cfg):
@@ -39,18 +39,8 @@ def simulate_strategy2(df, cfg):
             ei = i
             score = float(r.get("strategy2_score", 0) or 0)
             regime = str(r.get("market_regime", "N/D"))
-            rsi14 = float(r.get("rsi14", 0) or 0)
-            vol_ratio = float(r.get("vol_ratio", 0) or 0)
-            volume_ratio = float(r.get("volume_ratio_s2", 0) or 0)
-            ema20 = float(r.get("ema20", 0) or 0)
-            ema50 = float(r.get("ema50", 0) or 0)
-            trend_score = float(r.get("trend_score", 0) or 0)
-            momentum_score = float(r.get("momentum_score", 0) or 0)
-            volume_score = float(r.get("volume_score", 0) or 0)
-            setup_score = float(r.get("setup_score", 0) or 0)
-            extreme_risk = float(r.get("extreme_risk", 0) or 0) 
             continue
-            
+
         exitp = None
         reason = None
 
@@ -78,16 +68,6 @@ def simulate_strategy2(df, cfg):
                 "position_eur": position_eur,
                 "score": score,
                 "regime": regime,
-                "rsi14": rsi14,
-                "vol_ratio": vol_ratio,
-                "volume_ratio": volume_ratio,
-                "ema20": ema20,
-                "ema50": ema50,
-                "trend_score": trend_score,
-                "momentum_score": momentum_score,
-                "volume_score": volume_score,
-                "setup_score": setup_score,
-                "extreme_risk": extreme_risk,
                 "reason": reason,
                 "pnl_eur": pnl,
                 "capital_after": capital
