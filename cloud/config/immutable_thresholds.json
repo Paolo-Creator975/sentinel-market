@@ -1,0 +1,18 @@
+{
+  "strategy_id": "PD_LONG_REBOUND_24H_V1",
+  "feature": "dist_high168",
+  "quantile": 0.1,
+  "source_window_start": "2023-08-01 00:00:00+00:00",
+  "source_window_end": "2024-06-24 23:24:00+00:00",
+  "assets": {
+    "ADAUSDT": -0.13625024,
+    "DOGEUSDT": -0.16323419,
+    "LINKUSDT": -0.14807747,
+    "LTCUSDT": -0.11442406,
+    "SOLUSDT": -0.15292769,
+    "BNBUSDT": -0.10145115,
+    "XRPUSDT": -0.11695483
+  },
+  "immutable": true,
+  "sha256": "138b1badf9695b0393b9547dc0f32b022fc9a8a7b2bfbdea3d127fe084ba5b41"
+}
