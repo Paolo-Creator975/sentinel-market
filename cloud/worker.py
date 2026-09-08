@@ -19,14 +19,23 @@ def settle(c,sym,t):
   if bar:
    gross=float(bar['open'])/float(p['entry_price'])-1; net=gross-BASE_COST; pnl=float(p['notional_eur'])*net
    c.execute("UPDATE paper_positions SET status='CLOSED',exit_time=%s,exit_price=%s,gross_return=%s,net_return=%s,pnl_eur=%s WHERE position_id=%s AND status='OPEN'",(bar['open_time'],bar['open'],gross,net,pnl,p['position_id']))
-def open_pending(c,sym):
- for s in c.execute("SELECT * FROM signal_observations s WHERE symbol=%s AND is_signal=TRUE AND NOT EXISTS(SELECT 1 FROM paper_positions p WHERE p.symbol=s.symbol AND p.signal_time=s.signal_time) ORDER BY signal_time",(sym,)).fetchall():
-  if c.execute("SELECT 1 FROM paper_positions WHERE symbol=%s AND status='OPEN'",(sym,)).fetchone(): return
-  if c.execute("SELECT COUNT(*) n FROM paper_positions WHERE status='OPEN'").fetchone()['n']>=MAX_POS: return
-  bar=c.execute("SELECT open_time,open FROM hourly_bars WHERE symbol=%s AND open_time>%s ORDER BY open_time LIMIT 1",(sym,s['signal_time'])).fetchone()
-  if not bar: continue
-  pid=str(uuid.uuid5(uuid.NAMESPACE_URL,f"{sym}|{s['signal_time']}|PD_LONG_REBOUND_24H_V1")); notional=equity(c)*ALLOC
-  c.execute("INSERT INTO paper_positions(position_id,symbol,signal_time,entry_time,entry_price,exit_due,notional_eur,feature,threshold,status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN') ON CONFLICT DO NOTHING",(pid,sym,s['signal_time'],bar['open_time'],bar['open'],bar['open_time']+pd.Timedelta(hours=24),notional,s['feature'],s['threshold']))
+def decide_entries(c):
+ # A signal is actionable only at its first hourly open. If that instant was missed, reject permanently.
+ for sym in sorted(ALLOWED):
+  pending=c.execute("SELECT * FROM signal_observations s WHERE symbol=%s AND is_signal=TRUE AND NOT EXISTS(SELECT 1 FROM signal_entry_decisions d WHERE d.symbol=s.symbol AND d.signal_time=s.signal_time) ORDER BY signal_time",(sym,)).fetchall()
+  for s in pending:
+   firstbar=c.execute("SELECT open_time,open FROM hourly_bars WHERE symbol=%s AND open_time>%s ORDER BY open_time LIMIT 1",(sym,s['signal_time'])).fetchone()
+   latest=c.execute("SELECT open_time FROM hourly_bars WHERE symbol=%s ORDER BY open_time DESC LIMIT 1",(sym,)).fetchone()
+   if not firstbar or not latest: continue
+   if firstbar['open_time'] < latest['open_time']:
+    c.execute("INSERT INTO signal_entry_decisions(symbol,signal_time,entry_open_time,decision,reason) VALUES(%s,%s,%s,'REJECTED','MISSED_ENTRY_WINDOW') ON CONFLICT DO NOTHING",(sym,s['signal_time'],firstbar['open_time'])); continue
+   if c.execute("SELECT 1 FROM paper_positions WHERE symbol=%s AND status='OPEN'",(sym,)).fetchone():
+    c.execute("INSERT INTO signal_entry_decisions(symbol,signal_time,entry_open_time,decision,reason) VALUES(%s,%s,%s,'REJECTED','ASSET_OVERLAP') ON CONFLICT DO NOTHING",(sym,s['signal_time'],firstbar['open_time'])); continue
+   if c.execute("SELECT COUNT(*) n FROM paper_positions WHERE status='OPEN'").fetchone()['n']>=MAX_POS:
+    c.execute("INSERT INTO signal_entry_decisions(symbol,signal_time,entry_open_time,decision,reason) VALUES(%s,%s,%s,'REJECTED','PORTFOLIO_CAP') ON CONFLICT DO NOTHING",(sym,s['signal_time'],firstbar['open_time'])); continue
+   pid=str(uuid.uuid5(uuid.NAMESPACE_URL,f"{sym}|{s['signal_time']}|PD_LONG_REBOUND_24H_V1")); notional=equity(c)*ALLOC
+   c.execute("INSERT INTO paper_positions(position_id,symbol,signal_time,entry_time,entry_price,exit_due,notional_eur,feature,threshold,status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN') ON CONFLICT DO NOTHING",(pid,sym,s['signal_time'],firstbar['open_time'],firstbar['open'],firstbar['open_time']+pd.Timedelta(hours=24),notional,s['feature'],s['threshold']))
+   c.execute("INSERT INTO signal_entry_decisions(symbol,signal_time,entry_open_time,decision,reason) VALUES(%s,%s,%s,'OPENED','ACCEPTED') ON CONFLICT DO NOTHING",(sym,s['signal_time'],firstbar['open_time']))
 def mark(c,marks):
  t=max(x[0] for x in marks); realized=equity(c); prices={s:p for _,s,p in marks}; unreal=exp=0.
  for p in c.execute("SELECT * FROM paper_positions WHERE status='OPEN'").fetchall():
@@ -37,15 +46,21 @@ def run():
  rh=pd.Timestamp.now(tz='UTC').floor('h')
  with psycopg.connect(DB,row_factory=dict_row,autocommit=False) as c:
   schema(c); old=c.execute("SELECT status FROM worker_runs WHERE run_hour=%s",(rh,)).fetchone()
-  if old and old['status']=='OK': return
+  if old and old['status']=='OK': print(f'run_hour={rh} status=SKIP_ALREADY_OK'); return
   c.execute("INSERT INTO worker_runs(run_hour,started_at,status,config_sha) VALUES(%s,now(),'RUNNING',%s) ON CONFLICT(run_hour) DO UPDATE SET started_at=now(),status='RUNNING',error=NULL",(rh,CFG['sha256']))
   try:
    data={}; marks=[]
    for s in sorted(ALLOWED):
     b=closed_hourly_bars(s); data[s]=b; x=ingest(c,s,b); marks.append((x.close_time,s,float(x.close)))
    for s,b in data.items(): settle(c,s,b.iloc[-1].close_time)
-   for s in sorted(ALLOWED): open_pending(c,s)
-   mark(c,marks); c.execute("UPDATE worker_runs SET finished_at=now(),status='OK',bars_ok=7,signals_ok=7 WHERE run_hour=%s",(rh,)); c.commit()
+   decide_entries(c); mark(c,marks); c.execute("UPDATE worker_runs SET finished_at=now(),status='OK',bars_ok=7,signals_ok=7 WHERE run_hour=%s",(rh,)); c.commit()
+   pos=c.execute("SELECT COUNT(*) n FROM paper_positions").fetchone()['n']; sig=c.execute("SELECT COUNT(*) n FROM signal_observations").fetchone()['n']; dec=c.execute("SELECT COUNT(*) n FROM signal_entry_decisions").fetchone()['n']
+   print(f'run_hour={rh} status=OK signals={sig} decisions={dec} positions={pos}')
   except Exception as e:
-   c.rollback(); raise
+   c.rollback()
+   try:
+    with psycopg.connect(DB,row_factory=dict_row,autocommit=True) as c2:
+     schema(c2); c2.execute("INSERT INTO worker_runs(run_hour,started_at,finished_at,status,error,config_sha) VALUES(%s,now(),now(),'ERROR',%s,%s) ON CONFLICT(run_hour) DO UPDATE SET finished_at=now(),status='ERROR',error=EXCLUDED.error",(rh,str(e)[:2000],CFG['sha256']))
+   finally: print(f'run_hour={rh} status=ERROR error={type(e).__name__}:{e}')
+   raise
 if __name__=='__main__': run()
