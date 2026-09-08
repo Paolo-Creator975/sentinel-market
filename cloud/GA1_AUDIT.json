@@ -1,0 +1,8 @@
+{
+  "phase": "GA1",
+  "status": "GA1_BLOCKERS_FIXED_IN_DEPLOYABLE_BUILD_AWAITING_CLOUD_INTEGRATION_TEST",
+  "go_live_90d_clock": false,
+  "threshold_sha": "138b1badf9695b0393b9547dc0f32b022fc9a8a7b2bfbdea3d127fe084ba5b41",
+  "audit_sha256": "0946046ffdedb01497b815f697b9151188dabd905c78757e05f621ecb744d115",
+  "next": "Provision managed PostgreSQL, deploy hourly worker, then cold-restart/backup and 24-48h shadow burn-in tests."
+}
