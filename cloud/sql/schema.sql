@@ -124,3 +124,67 @@ CREATE TABLE IF NOT EXISTS donchian_shadow_equity_marks (
     drawdown DOUBLE PRECISION NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS crypto24_opportunity_observations (
+    symbol TEXT NOT NULL,
+    signal_time TIMESTAMPTZ NOT NULL,
+    asset_class TEXT NOT NULL,
+    bar_close DOUBLE PRECISION NOT NULL,
+    prior_high DOUBLE PRECISION NOT NULL,
+    ema DOUBLE PRECISION NOT NULL,
+    hourly_volatility DOUBLE PRECISION NOT NULL,
+    momentum DOUBLE PRECISION NOT NULL,
+    volume_ratio DOUBLE PRECISION NOT NULL,
+    breakout BOOLEAN NOT NULL,
+    new_breakout BOOLEAN NOT NULL,
+    trend_ok BOOLEAN NOT NULL,
+    score DOUBLE PRECISION NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('WATCH','TECHNICAL_CANDIDATE','CANDIDATE','WAIT','REJECT','BLOCKED_DATA')),
+    reasons TEXT[] NOT NULL,
+    news_state TEXT NOT NULL,
+    config_sha TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY(symbol, signal_time)
+);
+
+CREATE TABLE IF NOT EXISTS crypto24_paper_positions (
+    position_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    signal_time TIMESTAMPTZ NOT NULL,
+    entry_time TIMESTAMPTZ NOT NULL,
+    entry_price DOUBLE PRECISION NOT NULL,
+    exit_due TIMESTAMPTZ NOT NULL,
+    last_checked_time TIMESTAMPTZ NOT NULL,
+    initial_notional_eur DOUBLE PRECISION NOT NULL,
+    remaining_notional_eur DOUBLE PRECISION NOT NULL,
+    initial_risk_eur DOUBLE PRECISION NOT NULL,
+    stop_price DOUBLE PRECISION NOT NULL,
+    first_target_price DOUBLE PRECISION NOT NULL,
+    first_target_hit BOOLEAN NOT NULL DEFAULT FALSE,
+    realized_pnl_eur DOUBLE PRECISION NOT NULL DEFAULT 0,
+    score DOUBLE PRECISION NOT NULL,
+    config_sha TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('OPEN','CLOSED')),
+    exit_time TIMESTAMPTZ,
+    exit_price DOUBLE PRECISION,
+    exit_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(symbol,signal_time)
+);
+
+CREATE TABLE IF NOT EXISTS crypto24_cash_flows (
+    flow_month DATE PRIMARY KEY,
+    amount_eur DOUBLE PRECISION NOT NULL CHECK(amount_eur >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS crypto24_equity_marks (
+    mark_time TIMESTAMPTZ PRIMARY KEY,
+    contributed_equity DOUBLE PRECISION NOT NULL,
+    realized_equity DOUBLE PRECISION NOT NULL,
+    marked_equity DOUBLE PRECISION NOT NULL,
+    open_exposure DOUBLE PRECISION NOT NULL,
+    open_risk DOUBLE PRECISION NOT NULL,
+    drawdown DOUBLE PRECISION NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
