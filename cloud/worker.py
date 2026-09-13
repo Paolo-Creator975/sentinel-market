@@ -5,13 +5,15 @@ from pathlib import Path
 import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
-from app.config_guard import load_and_verify, load_and_verify_donchian
+from app.config_guard import load_and_verify, load_and_verify_donchian, load_crypto_24h_candidate
 from app.donchian_shadow import calculate_snapshot, position_weight
+from app.crypto_24h import calculate_opportunity, plan_paper_position
 from app.market import closed_hourly_bars, ALLOWED
 
 ROOT=Path(__file__).resolve().parent
 CFG=load_and_verify(ROOT)
 DONCHIAN_CFG=load_and_verify_donchian(ROOT)
+CRYPTO24_CFG=load_crypto_24h_candidate(ROOT)
 DB=os.environ["DATABASE_URL"]
 BASE_COST=0.002
 MAX_POS=3
@@ -19,6 +21,8 @@ ALLOC=0.20
 START_EQUITY=10000.0
 SHADOW_START_EQUITY=1000.0
 SHADOW_MONTHLY_FLOW=300.0
+CRYPTO24_START_EQUITY=1000.0
+CRYPTO24_MONTHLY_FLOW=300.0
 
 def hour_floor(ts):
     return ts.floor("h")
@@ -38,6 +42,25 @@ def ensure_schema(conn):
     shadow_saved=conn.execute("SELECT value FROM sentinel_meta WHERE key='donchian_shadow_config_sha'").fetchone()["value"]
     if shadow_saved != DONCHIAN_CFG["sha256"]:
         raise RuntimeError("database Donchian hash differs from frozen config")
+    conn.execute("""INSERT INTO sentinel_meta(key,value) VALUES('crypto24_candidate_config_sha',%s)
+                    ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=now()""",
+                 (CRYPTO24_CFG["sha256"],))
+    conn.execute("""INSERT INTO sentinel_meta(key,value) VALUES('crypto24_activated_at',now()::text)
+                    ON CONFLICT(key) DO NOTHING""")
+    conn.execute("""INSERT INTO sentinel_meta(key,value)
+                    SELECT 'crypto24_demo_ends_at',(value::timestamptz+interval '90 days')::text
+                    FROM sentinel_meta WHERE key='crypto24_activated_at'
+                    ON CONFLICT(key) DO NOTHING""")
+    conn.execute("""WITH activation AS (
+          SELECT value::timestamptz activated_at FROM sentinel_meta WHERE key='crypto24_activated_at'
+        ), months AS (
+          SELECT generate_series(date_trunc('month',activated_at)+interval '1 month',
+                                 date_trunc('month',now()),interval '1 month')::date flow_month
+          FROM activation
+        )
+        INSERT INTO crypto24_cash_flows(flow_month,amount_eur)
+        SELECT flow_month,%s FROM months ON CONFLICT(flow_month) DO NOTHING""",
+        (CRYPTO24_MONTHLY_FLOW,))
     conn.execute("""WITH activation AS (
           SELECT value::timestamptz activated_at FROM sentinel_meta
           WHERE key='donchian_shadow_activated_at'
@@ -90,6 +113,138 @@ def ingest_donchian_shadow(conn,symbol):
        snapshot["breakout"],snapshot["trend_ok"],snapshot["daily_decision"],
        snapshot["entry_signal"],snapshot["exit_signal"],DONCHIAN_CFG["sha256"]))
     return snapshot
+
+def ingest_crypto24_observer(conn,symbol):
+    rows=conn.execute("""SELECT symbol,open_time,close_time,open,high,low,close,volume
+                         FROM hourly_bars WHERE symbol=%s ORDER BY open_time""",(symbol,)).fetchall()
+    obs=calculate_opportunity(pd.DataFrame(rows),CRYPTO24_CFG,news_state="UNAVAILABLE")
+    conn.execute("""INSERT INTO crypto24_opportunity_observations(
+      symbol,signal_time,asset_class,bar_close,prior_high,ema,hourly_volatility,momentum,
+      volume_ratio,breakout,new_breakout,trend_ok,score,decision,reasons,news_state,config_sha)
+      VALUES(%s,%s,'crypto',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+      ON CONFLICT(symbol,signal_time) DO NOTHING""",
+      (obs["symbol"],obs["signal_time"],obs["bar_close"],obs["prior_high"],obs["ema"],
+       obs["hourly_volatility"],obs["momentum"],obs["volume_ratio"],obs["breakout"],
+       obs["new_breakout"],obs["trend_ok"],obs["score"],obs["decision"],obs["reasons"],obs["news_state"],
+       CRYPTO24_CFG["sha256"]))
+    return obs
+
+def crypto24_equity(conn):
+    flows=conn.execute("SELECT COALESCE(SUM(amount_eur),0) total FROM crypto24_cash_flows").fetchone()
+    pnl=conn.execute("SELECT COALESCE(SUM(realized_pnl_eur),0) total FROM crypto24_paper_positions").fetchone()
+    contributed=CRYPTO24_START_EQUITY+float(flows["total"])
+    return contributed,contributed+float(pnl["total"])
+
+def crypto24_open_risk(conn):
+    row=conn.execute("""SELECT COALESCE(SUM(
+      GREATEST((entry_price-stop_price)/entry_price,0)*remaining_notional_eur),0) total
+      FROM crypto24_paper_positions WHERE status='OPEN'""").fetchone()
+    return float(row["total"])
+
+def try_open_crypto24(conn):
+    active=conn.execute("""SELECT now() < value::timestamptz active
+                            FROM sentinel_meta WHERE key='crypto24_demo_ends_at'""").fetchone()
+    if not active or not active["active"]: return
+    pending=conn.execute("""SELECT o.* FROM crypto24_opportunity_observations o
+      WHERE o.decision IN ('TECHNICAL_CANDIDATE','CANDIDATE')
+      AND NOT EXISTS (SELECT 1 FROM crypto24_paper_positions p
+                      WHERE p.symbol=o.symbol AND p.signal_time=o.signal_time)
+      ORDER BY o.signal_time,o.score DESC,o.symbol""").fetchall()
+    for obs in pending:
+        if conn.execute("SELECT 1 FROM crypto24_paper_positions WHERE symbol=%s AND status='OPEN'",
+                        (obs["symbol"],)).fetchone():
+            continue
+        bar=conn.execute("""SELECT open_time,open FROM hourly_bars
+          WHERE symbol=%s AND open_time>%s ORDER BY open_time LIMIT 1""",
+          (obs["symbol"],obs["signal_time"])).fetchone()
+        if not bar: continue
+        contributed,equity=crypto24_equity(conn)
+        plan=plan_paper_position(float(bar["open"]),float(obs["hourly_volatility"]),
+             float(obs["score"]),equity,contributed,crypto24_open_risk(conn),CRYPTO24_CFG)
+        if not plan: continue
+        pid=str(uuid.uuid5(uuid.NAMESPACE_URL,
+                           f"{obs['symbol']}|{obs['signal_time']}|{CRYPTO24_CFG['strategy_id']}"))
+        conn.execute("""INSERT INTO crypto24_paper_positions(position_id,symbol,signal_time,
+          entry_time,entry_price,exit_due,last_checked_time,initial_notional_eur,
+          remaining_notional_eur,initial_risk_eur,stop_price,first_target_price,score,
+          config_sha,status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN')
+          ON CONFLICT(symbol,signal_time) DO NOTHING""",
+          (pid,obs["symbol"],obs["signal_time"],bar["open_time"],bar["open"],
+           bar["open_time"]+pd.Timedelta(hours=int(CRYPTO24_CFG["maximum_holding_hours"])),
+           bar["open_time"],plan["notional_eur"],plan["notional_eur"],plan["risk_eur"],
+           plan["stop_price"],plan["first_target_price"],obs["score"],CRYPTO24_CFG["sha256"]))
+
+def settle_crypto24(conn):
+    cost=float(CRYPTO24_CFG["round_trip_cost_rate"])
+    fraction=float(CRYPTO24_CFG["first_profit_fraction"])
+    positions=conn.execute("SELECT * FROM crypto24_paper_positions WHERE status='OPEN'").fetchall()
+    for original in positions:
+        p=dict(original)
+        bars=conn.execute("""SELECT open_time,open,high,low,close FROM hourly_bars
+          WHERE symbol=%s AND open_time>%s ORDER BY open_time""",
+          (p["symbol"],p["last_checked_time"])).fetchall()
+        for bar in bars:
+            if p["status"] != "OPEN": break
+            exit_price=reason=None
+            # Conservative convention when stop and target occur inside the same hourly bar.
+            if float(bar["low"]) <= float(p["stop_price"]):
+                exit_price=min(float(bar["open"]),float(p["stop_price"]))
+                reason="stop"
+            elif bar["open_time"] >= p["exit_due"]:
+                exit_price=float(bar["open"])
+                reason="max_hold"
+            if exit_price is not None:
+                amount=float(p["remaining_notional_eur"])
+                pnl=amount*(exit_price/float(p["entry_price"])-1-cost)
+                p["realized_pnl_eur"]=float(p["realized_pnl_eur"])+pnl
+                p["remaining_notional_eur"]=0.0; p["status"]="CLOSED"
+                conn.execute("""UPDATE crypto24_paper_positions SET status='CLOSED',
+                  remaining_notional_eur=0,realized_pnl_eur=%s,exit_time=%s,exit_price=%s,
+                  exit_reason=%s,last_checked_time=%s WHERE position_id=%s""",
+                  (p["realized_pnl_eur"],bar["open_time"],exit_price,reason,
+                   bar["open_time"],p["position_id"]))
+                continue
+            if (not p["first_target_hit"] and
+                float(bar["high"]) >= float(p["first_target_price"])):
+                exit_price=max(float(bar["open"]),float(p["first_target_price"]))
+                amount=float(p["initial_notional_eur"])*fraction
+                pnl=amount*(exit_price/float(p["entry_price"])-1-cost)
+                p["remaining_notional_eur"]=float(p["remaining_notional_eur"])-amount
+                p["realized_pnl_eur"]=float(p["realized_pnl_eur"])+pnl
+                p["first_target_hit"]=True; p["stop_price"]=float(p["entry_price"])
+                conn.execute("""UPDATE crypto24_paper_positions SET first_target_hit=TRUE,
+                  remaining_notional_eur=%s,realized_pnl_eur=%s,stop_price=entry_price,
+                  last_checked_time=%s WHERE position_id=%s""",
+                  (p["remaining_notional_eur"],p["realized_pnl_eur"],bar["open_time"],p["position_id"]))
+            else:
+                conn.execute("UPDATE crypto24_paper_positions SET last_checked_time=%s WHERE position_id=%s",
+                             (bar["open_time"],p["position_id"]))
+                p["last_checked_time"]=bar["open_time"]
+
+def mark_crypto24(conn,marks):
+    if not marks: return
+    t=max(x[0] for x in marks)
+    contributed,realized=crypto24_equity(conn)
+    prices={symbol:price for _,symbol,price in marks}
+    positions=conn.execute("SELECT * FROM crypto24_paper_positions WHERE status='OPEN'").fetchall()
+    unrealized=exposure=0.0
+    for p in positions:
+        if p["symbol"] in prices:
+            amount=float(p["remaining_notional_eur"])
+            unrealized+=amount*(prices[p["symbol"]]/float(p["entry_price"])-1)
+            exposure+=amount
+    marked=realized+unrealized
+    peakrow=conn.execute("SELECT COALESCE(MAX(marked_equity),%s) peak FROM crypto24_equity_marks",
+                         (CRYPTO24_START_EQUITY,)).fetchone()
+    peak=max(float(peakrow["peak"]),marked)
+    drawdown=max(0.0,1-marked/peak)
+    conn.execute("""INSERT INTO crypto24_equity_marks(mark_time,contributed_equity,
+      realized_equity,marked_equity,open_exposure,open_risk,drawdown)
+      VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(mark_time) DO UPDATE SET
+      contributed_equity=EXCLUDED.contributed_equity,realized_equity=EXCLUDED.realized_equity,
+      marked_equity=EXCLUDED.marked_equity,open_exposure=EXCLUDED.open_exposure,
+      open_risk=EXCLUDED.open_risk,drawdown=EXCLUDED.drawdown""",
+      (t,contributed,realized,marked,exposure,crypto24_open_risk(conn),drawdown))
 
 def settle_due(conn,symbol,bars):
     px=float(bars.iloc[-1]["close"])
@@ -251,15 +406,19 @@ def run_once():
                 data[symbol]=bars
                 last,feature,threshold,is_signal=ingest_and_signal(conn,symbol,bars)
                 ingest_donchian_shadow(conn,symbol)
+                ingest_crypto24_observer(conn,symbol)
                 bars_ok+=1; signals_ok+=1
                 marks.append((last.close_time,symbol,float(last.close)))
             # lifecycle order: settle exits, then open pending next-hour entries, then mark equity
             for symbol,bars in data.items(): settle_due(conn,symbol,bars)
             settle_donchian_shadow(conn)
+            settle_crypto24(conn)
             for symbol,bars in data.items(): try_open_from_previous_signal(conn,symbol,bars)
             try_open_donchian_shadow(conn)
+            try_open_crypto24(conn)
             mark_equity(conn,marks)
             mark_donchian_shadow(conn,marks)
+            mark_crypto24(conn,marks)
             conn.execute("""UPDATE worker_runs SET finished_at=now(),status='OK',bars_ok=%s,signals_ok=%s
                             WHERE run_hour=%s""",(bars_ok,signals_ok,run_hour))
             conn.commit()
