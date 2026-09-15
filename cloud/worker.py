@@ -1,5 +1,5 @@
 
-import os, uuid, time, math
+import os, uuid, time, math, json
 from datetime import datetime, timezone
 from pathlib import Path
 import pandas as pd
@@ -246,6 +246,54 @@ def mark_crypto24(conn,marks):
       open_risk=EXCLUDED.open_risk,drawdown=EXCLUDED.drawdown""",
       (t,contributed,realized,marked,exposure,crypto24_open_risk(conn),drawdown))
 
+def log_crypto24_summary(conn,run_hour):
+    """Emit one compact, read-only operational snapshot for Railway logs."""
+    decisions=conn.execute("""SELECT decision,COUNT(*) AS n
+      FROM crypto24_opportunity_observations
+      WHERE signal_time >= %s-interval '2 hours'
+      GROUP BY decision ORDER BY decision""",(run_hour,)).fetchall()
+    positions=conn.execute("""SELECT symbol,status,entry_time,entry_price,exit_time,exit_price,
+      initial_notional_eur,remaining_notional_eur,initial_risk_eur,realized_pnl_eur,
+      score,first_target_hit,exit_reason
+      FROM crypto24_paper_positions ORDER BY entry_time""").fetchall()
+    latest_mark=conn.execute("""SELECT mark_time,contributed_equity,realized_equity,
+      marked_equity,open_exposure,open_risk,drawdown
+      FROM crypto24_equity_marks ORDER BY mark_time DESC LIMIT 1""").fetchone()
+    meta=conn.execute("""SELECT key,value FROM sentinel_meta
+      WHERE key IN ('crypto24_activated_at','crypto24_demo_ends_at') ORDER BY key""").fetchall()
+
+    def number(value):
+        return None if value is None else round(float(value),6)
+
+    position_rows=[]
+    for p in positions:
+        position_rows.append({
+          "symbol":p["symbol"],"status":p["status"],
+          "entry_time":p["entry_time"],"entry_price":number(p["entry_price"]),
+          "exit_time":p["exit_time"],"exit_price":number(p["exit_price"]),
+          "initial_notional_eur":number(p["initial_notional_eur"]),
+          "remaining_notional_eur":number(p["remaining_notional_eur"]),
+          "initial_risk_eur":number(p["initial_risk_eur"]),
+          "realized_pnl_eur":number(p["realized_pnl_eur"]),
+          "score":number(p["score"]),"first_target_hit":p["first_target_hit"],
+          "exit_reason":p["exit_reason"]})
+    mark=None if not latest_mark else {
+      "mark_time":latest_mark["mark_time"],
+      "contributed_equity":number(latest_mark["contributed_equity"]),
+      "realized_equity":number(latest_mark["realized_equity"]),
+      "marked_equity":number(latest_mark["marked_equity"]),
+      "open_exposure":number(latest_mark["open_exposure"]),
+      "open_risk":number(latest_mark["open_risk"]),
+      "drawdown":number(latest_mark["drawdown"])}
+    payload={"run_hour":run_hour,"demo":{r["key"]:r["value"] for r in meta},
+             "recent_decisions":{r["decision"]:r["n"] for r in decisions},
+             "positions_total":len(position_rows),
+             "positions_open":sum(p["status"]=="OPEN" for p in position_rows),
+             "positions_closed":sum(p["status"]=="CLOSED" for p in position_rows),
+             "positions":position_rows,"equity":mark}
+    print("SENTINEL_CRYPTO24_SUMMARY "+json.dumps(payload,default=str,
+          sort_keys=True,separators=(",",":")),flush=True)
+
 def settle_due(conn,symbol,bars):
     px=float(bars.iloc[-1]["close"])
     t=bars.iloc[-1]["close_time"]
@@ -419,6 +467,7 @@ def run_once():
             mark_equity(conn,marks)
             mark_donchian_shadow(conn,marks)
             mark_crypto24(conn,marks)
+            log_crypto24_summary(conn,run_hour)
             conn.execute("""UPDATE worker_runs SET finished_at=now(),status='OK',bars_ok=%s,signals_ok=%s
                             WHERE run_hour=%s""",(bars_ok,signals_ok,run_hour))
             conn.commit()
