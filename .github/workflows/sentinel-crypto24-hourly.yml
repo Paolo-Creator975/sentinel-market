@@ -1,0 +1,49 @@
+name: Sentinel crypto24 hourly paper demo
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Minute 17 avoids GitHub's highest cron load at the start of each hour.
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sentinel-crypto24-hourly
+  cancel-in-progress: false
+
+jobs:
+  paper-demo:
+    if: ${{ vars.SENTINEL_FREE_HOST_ACTIVE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloud
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      EXPECTED_ACTIVATED_AT: "2026-09-13T19:07:52.404388+00:00"
+      EXPECTED_ENDS_AT: "2026-12-12T19:07:52.404388+00:00"
+    steps:
+      - name: Check out frozen source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud/requirements.txt
+
+      - name: Install frozen dependencies
+        run: pip install --requirement requirements.txt
+
+      - name: Run strategy regression tests
+        run: python -m unittest -v test_crypto_24h.py test_donchian_shadow.py
+
+      - name: Verify migrated demo continuity
+        run: python verify_demo_continuity.py
+
+      - name: Run one paper-only hourly cycle
+        run: python worker.py
