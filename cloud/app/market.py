@@ -1,7 +1,5 @@
-
 import time, requests, pandas as pd
-
-BASE="https://api.binance.com"
+BASE="https://data-api.binance.vision"
 ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
 
 def get_json(path, attempts=5):
