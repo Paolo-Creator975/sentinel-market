@@ -1,12 +1,12 @@
 import time, requests, pandas as pd
-BASE="https://data-api.binance.vision"
+BASE="https://api.binance.us"
 ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
 
-def get_json(path, attempts=5):
+def get_json(path, attempts=3):
     last=None
     for k in range(attempts):
         try:
-            r=requests.get(BASE+path,timeout=12,headers={"User-Agent":"SentinelMarket/GA1"})
+            r=requests.get(BASE+path,timeout=8,headers={"User-Agent":"SentinelMarket/GA1"})
             r.raise_for_status()
             return r.json()
         except Exception as e:
