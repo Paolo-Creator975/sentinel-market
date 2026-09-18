@@ -65,10 +65,10 @@ def verify() -> dict:
 
         run_status = connection.execute(
             """SELECT run_hour,status,bars_ok,signals_ok
-               FROM worker_runs ORDER BY run_hour DESC LIMIT 1"""
+               FROM worker_runs WHERE status='OK' ORDER BY run_hour DESC LIMIT 1"""
         ).fetchone()
         if not run_status or run_status["status"] != "OK":
-            raise RuntimeError("migrated database has no successful latest worker run")
+            raise RuntimeError("migrated database has no successful worker run")
 
         positions = connection.execute(
             """SELECT
