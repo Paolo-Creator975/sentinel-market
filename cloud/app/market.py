@@ -9,7 +9,7 @@ FALLBACK_BASES=tuple(
 ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
 _working_base=None
 
-def _normalize_small_gaps(df, symbol, max_gap_hours=6):
+def _normalize_small_gaps(df, symbol, max_gap_hours=24):
     """Represent short no-trade periods as flat, zero-volume hourly bars."""
     if df.empty:
         return df
