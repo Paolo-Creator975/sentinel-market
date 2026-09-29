@@ -9,6 +9,31 @@ FALLBACK_BASES=tuple(
 ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
 _working_base=None
 
+def _normalize_small_gaps(df, symbol, max_gap_hours=6):
+    """Represent short no-trade periods as flat, zero-volume hourly bars."""
+    if df.empty:
+        return df
+    df=df.sort_values("open_time").drop_duplicates("open_time",keep="last").set_index("open_time")
+    full=pd.date_range(df.index.min(),df.index.max(),freq="1h",tz="UTC")
+    missing=~full.isin(df.index)
+    longest=run=0
+    for is_missing in missing:
+        run=run+1 if is_missing else 0
+        longest=max(longest,run)
+    if longest>max_gap_hours:
+        raise RuntimeError(f"1h candle gap too large for {symbol}: {longest}h")
+    if missing.any():
+        df=df.reindex(full)
+        previous_close=df["close"].ffill()
+        for column in ("open","high","low","close"):
+            df[column]=df[column].fillna(previous_close)
+        df["volume"]=df["volume"].fillna(0.0)
+        df["symbol"]=df["symbol"].fillna(symbol)
+        df["close_time"]=df["close_time"].fillna(
+            pd.Series(df.index+pd.Timedelta(hours=1)-pd.Timedelta(milliseconds=1),index=df.index)
+        )
+    return df.rename_axis("open_time").reset_index()
+
 def get_json(path, attempts=1):
     global _working_base
     last=None
@@ -52,6 +77,7 @@ def closed_hourly_bars(symbol, limit=200):
               close=float(x[4]), volume=float(x[5])
             ))
         df=pd.DataFrame(rows)
+        df=_normalize_small_gaps(df,symbol)
         if len(df)>=required:
             d=df.open_time.tail(required).diff().dropna().dt.total_seconds()
             if (d==3600).all():
