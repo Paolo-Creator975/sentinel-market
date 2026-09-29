@@ -23,7 +23,8 @@ jobs:
         working-directory: cloud
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
-      BINANCE_API_BASE: "https://api.binance.us"
+      BINANCE_API_BASE: "https://api-gcp.binance.com"
+      BINANCE_FALLBACK_BASES: "https://api1.binance.com,https://api2.binance.com,https://api3.binance.com,https://api4.binance.com"
       EXPECTED_ACTIVATED_AT: "2026-09-13T19:07:52.404388+00:00"
       EXPECTED_ENDS_AT: "2026-12-12T19:07:52.404388+00:00"
     steps:
