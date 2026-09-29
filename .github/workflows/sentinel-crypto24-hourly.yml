@@ -23,7 +23,7 @@ jobs:
         working-directory: cloud
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
-      BINANCE_API_BASE: "https://data-api.binance.vision"
+      BINANCE_API_BASE: "https://api.binance.us"
       EXPECTED_ACTIVATED_AT: "2026-09-13T19:07:52.404388+00:00"
       EXPECTED_ENDS_AT: "2026-12-12T19:07:52.404388+00:00"
     steps:
