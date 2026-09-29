@@ -1,17 +1,36 @@
 import os, time, requests, pandas as pd
-BASE=os.getenv("BINANCE_API_BASE","https://api.binance.com").rstrip("/")
-ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
 
-def get_json(path, attempts=5):
+BASE=os.getenv("BINANCE_API_BASE","https://api.binance.com").rstrip("/")
+FALLBACK_BASES=tuple(
+    base.rstrip("/") for base in os.getenv(
+        "BINANCE_FALLBACK_BASES", "https://data.binance.com"
+    ).split(",") if base.strip()
+)
+ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
+_working_base=None
+
+def get_json(path, attempts=2):
+    global _working_base
     last=None
-    for k in range(attempts):
-        try:
-            r=requests.get(BASE+path,timeout=12,headers={"User-Agent":"SentinelMarket/GA1"})
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            last=e
-            time.sleep(min(2**k,16))
+    bases=[]
+    for base in ((_working_base,) if _working_base else ()) + (BASE,) + FALLBACK_BASES:
+        if base and base not in bases:
+            bases.append(base)
+    for base in bases:
+        for k in range(attempts):
+            try:
+                r=requests.get(
+                    base+path,
+                    timeout=(3.05, 8),
+                    headers={"User-Agent":"SentinelMarket/GA1"},
+                )
+                r.raise_for_status()
+                _working_base=base
+                return r.json()
+            except Exception as e:
+                last=e
+                if k+1 < attempts:
+                    time.sleep(1)
     raise RuntimeError(f"market-data failure after retries: {last}")
 
 def closed_hourly_bars(symbol, limit=200):
