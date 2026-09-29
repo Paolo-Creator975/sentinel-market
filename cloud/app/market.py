@@ -3,13 +3,13 @@ import os, time, requests, pandas as pd
 BASE=os.getenv("BINANCE_API_BASE","https://api.binance.com").rstrip("/")
 FALLBACK_BASES=tuple(
     base.rstrip("/") for base in os.getenv(
-        "BINANCE_FALLBACK_BASES", "https://data.binance.com"
+        "BINANCE_FALLBACK_BASES", "https://data.binance.com,https://api.binance.us"
     ).split(",") if base.strip()
 )
 ALLOWED={"ADAUSDT","DOGEUSDT","LINKUSDT","LTCUSDT","SOLUSDT","BNBUSDT","XRPUSDT"}
 _working_base=None
 
-def get_json(path, attempts=2):
+def get_json(path, attempts=1):
     global _working_base
     last=None
     bases=[]
@@ -37,7 +37,7 @@ def closed_hourly_bars(symbol, limit=200):
     if symbol not in ALLOWED: raise ValueError("symbol not allowed")
     required=min(int(limit)-1,720) if int(limit)>200 else 168
     last=None
-    for attempt in range(3):
+    for attempt in range(1):
         now=pd.Timestamp.now(tz="UTC")
         end_ms=int((now.floor("h")-pd.Timedelta(milliseconds=1)).timestamp()*1000)
         raw=get_json(f"/api/v3/klines?symbol={symbol}&interval=1h&limit={int(limit)}&endTime={end_ms}")
