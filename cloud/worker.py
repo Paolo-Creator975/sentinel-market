@@ -85,7 +85,13 @@ def shadow_equity(conn):
     return contributed,contributed+float(pnl["total"])
 
 def ingest_and_signal(conn,symbol,bars):
+    latest=conn.execute(
+        "SELECT MAX(open_time) AS max_open_time FROM hourly_bars WHERE symbol=%s",
+        (symbol,),
+    ).fetchone()["max_open_time"]
     for _,b in bars.iterrows():
+        if latest is not None and b.open_time <= latest:
+            continue
         conn.execute("""INSERT INTO hourly_bars(symbol,open_time,close_time,open,high,low,close,volume)
           VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(symbol,open_time) DO NOTHING""",
           (symbol,b.open_time,b.close_time,b.open,b.high,b.low,b.close,b.volume))
