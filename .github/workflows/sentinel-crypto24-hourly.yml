@@ -23,6 +23,7 @@ jobs:
         working-directory: cloud
     env:
       DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      PGOPTIONS: "-c lock_timeout=5000 -c statement_timeout=30000"
       BINANCE_API_BASE: "https://api.binance.us"
       BINANCE_FALLBACK_BASES: ""
       EXPECTED_ACTIVATED_AT: "2026-09-13T19:07:52.404388+00:00"
