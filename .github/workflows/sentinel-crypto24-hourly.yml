@@ -19,7 +19,7 @@ jobs:
   paper-demo:
     if: ${{ vars.SENTINEL_FREE_HOST_ACTIVE == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: cloud
@@ -49,6 +49,11 @@ jobs:
 
       - name: Verify migrated demo continuity
         run: python verify_demo_continuity.py
+
+      - name: Preview crypto24 continuity backfill
+        env:
+          BACKFILL_APPLY: "false"
+        run: python backfill_crypto24_gap.py
 
       - name: Run one paper-only hourly cycle
         run: python worker.py
