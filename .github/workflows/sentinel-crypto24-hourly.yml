@@ -2,8 +2,6 @@ name: Sentinel crypto24 hourly paper demo
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
   schedule:
     # Minute 17 avoids GitHub's highest cron load at the start of each hour.
     - cron: "17 * * * *"
