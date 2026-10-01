@@ -105,10 +105,8 @@ def ingest_and_signal(conn,symbol,bars):
       (symbol,last.close_time,feature,threshold,is_signal,float(last.close),high168,CFG["sha256"]))
     return last,feature,threshold,is_signal
 
-def ingest_donchian_shadow(conn,symbol):
-    rows=conn.execute("""SELECT symbol,open_time,close_time,open,high,low,close,volume
-                         FROM hourly_bars WHERE symbol=%s ORDER BY open_time""",(symbol,)).fetchall()
-    snapshot=calculate_snapshot(pd.DataFrame(rows),DONCHIAN_CFG)
+def ingest_donchian_shadow(conn,symbol,bars):
+    snapshot=calculate_snapshot(bars,DONCHIAN_CFG)
     conn.execute("""INSERT INTO donchian_shadow_observations(
       symbol,signal_time,bar_close,high_336,low_168,ema_720,vol_168,breakout,trend_ok,
       daily_decision,entry_signal,exit_signal,config_sha)
@@ -120,10 +118,8 @@ def ingest_donchian_shadow(conn,symbol):
        snapshot["entry_signal"],snapshot["exit_signal"],DONCHIAN_CFG["sha256"]))
     return snapshot
 
-def ingest_crypto24_observer(conn,symbol):
-    rows=conn.execute("""SELECT symbol,open_time,close_time,open,high,low,close,volume
-                         FROM hourly_bars WHERE symbol=%s ORDER BY open_time""",(symbol,)).fetchall()
-    obs=calculate_opportunity(pd.DataFrame(rows),CRYPTO24_CFG,news_state="UNAVAILABLE")
+def ingest_crypto24_observer(conn,symbol,bars):
+    obs=calculate_opportunity(bars,CRYPTO24_CFG,news_state="UNAVAILABLE")
     conn.execute("""INSERT INTO crypto24_opportunity_observations(
       symbol,signal_time,asset_class,bar_close,prior_high,ema,hourly_volatility,momentum,
       volume_ratio,breakout,new_breakout,trend_ok,score,decision,reasons,news_state,config_sha)
@@ -459,8 +455,8 @@ def run_once():
                 bars=closed_hourly_bars(symbol,1000)
                 data[symbol]=bars
                 last,feature,threshold,is_signal=ingest_and_signal(conn,symbol,bars)
-                ingest_donchian_shadow(conn,symbol)
-                ingest_crypto24_observer(conn,symbol)
+                ingest_donchian_shadow(conn,symbol,bars)
+                ingest_crypto24_observer(conn,symbol,bars)
                 bars_ok+=1; signals_ok+=1
                 marks.append((last.close_time,symbol,float(last.close)))
             # lifecycle order: settle exits, then open pending next-hour entries, then mark equity
