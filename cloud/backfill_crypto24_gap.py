@@ -177,10 +177,6 @@ def mark_hour(conn, open_time, bars_by_symbol):
 
 def run():
     fetched = {symbol: closed_hourly_bars(symbol, 1000) for symbol in sorted(ALLOWED)}
-    bars_by_symbol = {
-        symbol: {row.open_time: row for row in frame.itertuples(index=False)}
-        for symbol, frame in fetched.items()
-    }
     with psycopg.connect(DB, row_factory=dict_row, autocommit=False,
                          options="-c lock_timeout=5000 -c statement_timeout=120000") as conn:
         existing = conn.execute(
@@ -193,11 +189,31 @@ def run():
         ).fetchone()["value"])
 
         bar_rows = []
-        observation_rows = []
         for symbol, frame in fetched.items():
             for b in frame.itertuples(index=False):
                 bar_rows.append((symbol, b.open_time, b.close_time, b.open, b.high,
                                  b.low, b.close, b.volume))
+
+        conn.executemany(
+            """INSERT INTO hourly_bars(symbol,open_time,close_time,open,high,low,close,volume)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(symbol,open_time) DO NOTHING""",
+            bar_rows,
+        )
+
+        frames = {}
+        bars_by_symbol = {}
+        observation_rows = []
+        for symbol in sorted(ALLOWED):
+            rows = conn.execute(
+                """SELECT symbol,open_time,close_time,open,high,low,close,volume
+                   FROM hourly_bars WHERE symbol=%s ORDER BY open_time""",
+                (symbol,),
+            ).fetchall()
+            frame = pd.DataFrame(rows)
+            frames[symbol] = frame
+            bars_by_symbol[symbol] = {
+                row.open_time: row for row in frame.itertuples(index=False)
+            }
             for idx in range(len(frame)):
                 if frame.iloc[idx].close_time < activation:
                     continue
@@ -209,11 +225,6 @@ def run():
                     obs["decision"], obs["reasons"], obs["news_state"], CFG["sha256"],
                 ))
 
-        conn.executemany(
-            """INSERT INTO hourly_bars(symbol,open_time,close_time,open,high,low,close,volume)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(symbol,open_time) DO NOTHING""",
-            bar_rows,
-        )
         conn.executemany(
             """INSERT INTO crypto24_opportunity_observations(
                symbol,signal_time,asset_class,bar_close,prior_high,ema,hourly_volatility,momentum,
