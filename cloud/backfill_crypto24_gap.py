@@ -214,7 +214,7 @@ def run():
             frame = pd.DataFrame(rows)
             frames[symbol] = frame
             bars_by_symbol[symbol] = {
-                row.open_time: row for row in frame.itertuples(index=False)
+                row.open_time: row._asdict() for row in frame.itertuples(index=False)
             }
             for idx in range(len(frame)):
                 if frame.iloc[idx].close_time < activation:
