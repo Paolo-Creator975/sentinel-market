@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parent
 REQUIRED_TABLES = (
     "hourly_bars",
     "worker_runs",
+    "paper_positions",
+    "donchian_shadow_positions",
     "crypto24_opportunity_observations",
     "crypto24_paper_positions",
     "crypto24_cash_flows",
@@ -78,6 +80,19 @@ def verify() -> dict:
                FROM crypto24_paper_positions"""
         ).fetchone()
 
+        legacy_positions = connection.execute(
+            """SELECT COUNT(*) FILTER (WHERE status='OPEN') AS open_count,
+                      COUNT(*) FILTER (WHERE status='CLOSED') AS closed_count,
+                      COALESCE(SUM(pnl_eur),0) AS realized_pnl
+               FROM paper_positions"""
+        ).fetchone()
+        shadow_positions = connection.execute(
+            """SELECT COUNT(*) FILTER (WHERE status='OPEN') AS open_count,
+                      COUNT(*) FILTER (WHERE status='CLOSED') AS closed_count,
+                      COALESCE(SUM(pnl_eur),0) AS realized_pnl
+               FROM donchian_shadow_positions"""
+        ).fetchone()
+
     return {
         "status": "OK",
         "strategy_id": config["strategy_id"],
@@ -87,6 +102,8 @@ def verify() -> dict:
         "table_counts": counts,
         "latest_worker_run": dict(run_status),
         "positions": dict(positions),
+        "legacy_positions": dict(legacy_positions),
+        "donchian_shadow_positions": dict(shadow_positions),
     }
 
 
