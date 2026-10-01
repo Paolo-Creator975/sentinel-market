@@ -194,11 +194,13 @@ def run():
                 bar_rows.append((symbol, b.open_time, b.close_time, b.open, b.high,
                                  b.low, b.close, b.volume))
 
-        conn.executemany(
-            """INSERT INTO hourly_bars(symbol,open_time,close_time,open,high,low,close,volume)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(symbol,open_time) DO NOTHING""",
-            bar_rows,
-        )
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                """INSERT INTO hourly_bars(symbol,open_time,close_time,open,high,low,close,volume)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT(symbol,open_time) DO NOTHING""",
+                bar_rows,
+            )
 
         frames = {}
         bars_by_symbol = {}
@@ -225,14 +227,15 @@ def run():
                     obs["decision"], obs["reasons"], obs["news_state"], CFG["sha256"],
                 ))
 
-        conn.executemany(
-            """INSERT INTO crypto24_opportunity_observations(
-               symbol,signal_time,asset_class,bar_close,prior_high,ema,hourly_volatility,momentum,
-               volume_ratio,breakout,new_breakout,trend_ok,score,decision,reasons,news_state,config_sha)
-               VALUES(%s,%s,'crypto',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT(symbol,signal_time) DO NOTHING""",
-            observation_rows,
-        )
+        with conn.cursor() as cursor:
+            cursor.executemany(
+                """INSERT INTO crypto24_opportunity_observations(
+                   symbol,signal_time,asset_class,bar_close,prior_high,ema,hourly_volatility,momentum,
+                   volume_ratio,breakout,new_breakout,trend_ok,score,decision,reasons,news_state,config_sha)
+                   VALUES(%s,%s,'crypto',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT(symbol,signal_time) DO NOTHING""",
+                observation_rows,
+            )
 
         hours = sorted(set.intersection(*[set(rows) for rows in bars_by_symbol.values()]))
         for open_time in (t for t in hours if t >= activation.floor("h")):
