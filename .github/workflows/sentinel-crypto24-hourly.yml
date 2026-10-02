@@ -2,8 +2,6 @@ name: Sentinel crypto24 hourly paper demo
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
   schedule:
     # Minute 17 avoids GitHub's highest cron load at the start of each hour.
     - cron: "17 * * * *"
@@ -19,7 +17,7 @@ jobs:
   paper-demo:
     if: ${{ vars.SENTINEL_FREE_HOST_ACTIVE == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: cloud
@@ -49,11 +47,6 @@ jobs:
 
       - name: Verify migrated demo continuity
         run: python verify_demo_continuity.py
-
-      - name: Apply crypto24 continuity backfill
-        env:
-          BACKFILL_APPLY: "true"
-        run: python backfill_crypto24_gap.py
 
       - name: Run one paper-only hourly cycle
         run: python worker.py
