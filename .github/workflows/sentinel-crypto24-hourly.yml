@@ -50,9 +50,9 @@ jobs:
       - name: Verify migrated demo continuity
         run: python verify_demo_continuity.py
 
-      - name: Preview crypto24 continuity backfill
+      - name: Apply crypto24 continuity backfill
         env:
-          BACKFILL_APPLY: "false"
+          BACKFILL_APPLY: "true"
         run: python backfill_crypto24_gap.py
 
       - name: Run one paper-only hourly cycle
