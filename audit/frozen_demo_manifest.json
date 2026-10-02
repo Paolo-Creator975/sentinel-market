@@ -1,0 +1,27 @@
+{
+  "manifest_id": "CRYPTO_24H_DEMO_V1_NEUTRAL_AUDIT_BASELINE",
+  "baseline_branch": "main",
+  "baseline_commit": "753d9ddd4faa0caa3b4d4d92d6d7e29b107f4e91",
+  "mode": "paper_only",
+  "strategy_mutation_allowed": false,
+  "protected_git_blobs": {
+    "cloud/Dockerfile": "a5d1b2a7808c5e4b02352a44f3b8194759275d3c",
+    "cloud/app/config_guard.py": "f2f552bd144810b7ebd08006f096bb8db990242d",
+    "cloud/app/crypto_24h.py": "c60a203fd974b6d5acbf9106c7e5c24ab24fb29f",
+    "cloud/config/crypto_24h_demo_v1.json": "2290ca7b4bddba0bffc1550f5124b4abc4c28ea1",
+    "cloud/requirements.txt": "ae64d67653c5864e18144d2be1694a08c725e86b",
+    "cloud/sql/schema.sql": "acd763ba6516375c5d12f1a5071ffbae659dfcda",
+    "cloud/worker.py": "f1325b5a53eeaf0c23a83d61d757516b07aef10a"
+  },
+  "required_config_assertions": {
+    "strategy_id": "CRYPTO_24H_DEMO_V1",
+    "status": "SHADOW_PAPER_FROZEN",
+    "immutable_for_demo": true,
+    "execution_enabled": false,
+    "paper_positions_enabled": true,
+    "real_trading_enabled": false,
+    "decision_cadence": "every_closed_hour",
+    "demo_duration_days": 90,
+    "configured_asset_classes": ["crypto"]
+  }
+}

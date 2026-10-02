@@ -1,0 +1,59 @@
+{
+  "audit_id": "SENTINEL_TEN_COMMANDMENTS_V1",
+  "scope": "methodological_audit_only",
+  "decision_authority": false,
+  "may_modify_frozen_demo": false,
+  "review_time": "after_day_90",
+  "rules": [
+    {
+      "id": 1,
+      "name": "premise_must_be_verified",
+      "rule": "Every premise is a hypothesis to verify, never a fact merely assumed."
+    },
+    {
+      "id": 2,
+      "name": "try_to_falsify",
+      "rule": "Actively look for evidence that disproves a hypothesis before accepting it."
+    },
+    {
+      "id": 3,
+      "name": "future_is_forbidden",
+      "rule": "No future price, outcome, profit, exit, or later information may enter a decision."
+    },
+    {
+      "id": 4,
+      "name": "independent_discovery_and_verification",
+      "rule": "Discovery, validation, and final confirmation must use independent data periods."
+    },
+    {
+      "id": 5,
+      "name": "do_not_rescue_negative_results",
+      "rule": "Do not change rules after seeing a negative result in order to make that result positive."
+    },
+    {
+      "id": 6,
+      "name": "wait_is_valid",
+      "rule": "WAIT and no trade are valid outcomes; operation frequency is diagnostic, not a target."
+    },
+    {
+      "id": 7,
+      "name": "return_and_risk_together",
+      "rule": "Evaluate return together with drawdown, exposure, costs, liquidity, and potential loss."
+    },
+    {
+      "id": 8,
+      "name": "adversarial_control",
+      "rule": "Use independent and adversarial checks designed to uncover errors, leakage, and fragile conclusions."
+    },
+    {
+      "id": 9,
+      "name": "uncertainty_is_not_certainty",
+      "rule": "Report estimates and uncertainty as such; never present them as guaranteed outcomes."
+    },
+    {
+      "id": 10,
+      "name": "safety_barriers_are_absolute",
+      "rule": "No AI, automation, or optimization may bypass paper-only mode, frozen configuration, risk barriers, or human authorization."
+    }
+  ]
+}
